@@ -141,6 +141,7 @@ them concurrently.
     "method": "POST",
     "enabled": false
   },
+  "dependencies": ["requests==2.31.0"],
   "container_registries": ["registry.example.com/library"],
   "process_pool_size": 2,
   "max_concurrency": 4
@@ -173,6 +174,72 @@ python -m conductor.cli run \
 
 To skip result output, add `--no-print-results`. To store the trace for later
 visualisation, use `--trace-file path/to/output.json`.
+
+### Remote resources
+
+Keep flows, payload seeds, and Python nodes in persistent repositories and let the CLI fetch them on demand. Declare repositories once in your global configuration and reference them by alias when invoking `run` or `diagram`.
+
+Add `resource_locations` for artefacts such as flow definitions or input payloads, and `code_locations` for Python packages that expose node callables. Each entry supports `type` (`filesystem`, `git`, or `http` for resources), a `url`/`path`, and optional `reference`/`subpath` hints.
+
+```jsonc
+{
+  "resource_locations": {
+    "flows": {
+      "type": "git",
+      "url": "https://github.com/acme/conductor-assets.git",
+      "reference": "main",
+      "subpath": "flows"
+    },
+    "payloads": {
+      "type": "http",
+      "url": "https://assets.example.com/conductor/payloads"
+    }
+  },
+  "code_locations": {
+    "nodes": {
+      "type": "git",
+      "url": "https://github.com/acme/conductor-nodes.git",
+      "reference": "main",
+      "subpath": "src"
+    }
+  }
+}
+```
+
+With the configuration above you can execute a flow and pull inputs straight from the registered repositories:
+
+```bash
+python -m conductor.cli run \
+  --global-config config/global.json \
+  --flow flows://order-routing.json \
+  --payload-file payloads://order-42.json
+```
+
+The CLI automatically clones git repositories into `~/.conductor/sources/<name>` (override with `resource_cache_dir` in the global config) and adds any configured `code_locations` to `sys.path` for the duration of the command. Resource aliases work the same way for `diagram`, and direct URLs such as `https://...` remain valid when you do not need an alias. Define optional `dependencies` alongside these sections to have the container entrypoint run `pip install` before executing your flow.
+
+
+## Docker Compose deployment
+
+Provision the CLI as a long-lived service by running the published container under Docker Compose. The entrypoint reads global configuration from either the CLI arguments or the `CONDUCTOR_GLOBAL_CONFIG`/`CONDUCTOR_GLOBAL_CONFIG_JSON` environment variables, installs any declared dependencies, and then executes the requested command.
+
+```yaml
+services:
+  conductor:
+    image: your-dockerhub-namespace/conductor:latest
+    restart: unless-stopped
+    environment:
+      CONDUCTOR_GLOBAL_CONFIG: /etc/conductor/global.json
+      # Optional: extra pip flags (e.g. custom index)
+      # CONDUCTOR_PIP_EXTRA_ARGS: "--index-url=https://pypi.your-company/internal/simple"
+    volumes:
+      - ./config:/etc/conductor:ro
+      - conductor-cache:/root/.conductor
+    command: ["run", "--flow", "flows://order-routing.json"]
+volumes:
+  conductor-cache: {}
+```
+
+The mounted `global.json` can point at remote repositories and include a `dependencies` list, ensuring any inline or process-based nodes have the Python packages they require. When configuration is easier to manage as environment variables, set `CONDUCTOR_GLOBAL_CONFIG_JSON` to a JSON document instead of mounting a file. A ready-to-edit template lives in `deploy/docker-compose.yaml`.
 
 ## Example functions and nodes
 

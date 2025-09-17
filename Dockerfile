@@ -8,5 +8,5 @@ RUN pip install --no-cache-dir pyyaml || true
 
 ENV PYTHONPATH=/app
 
-ENTRYPOINT ["python", "-m", "conductor.cli"]
+ENTRYPOINT ["python", "-m", "conductor.container_entrypoint"]
 CMD ["run", "--help"]

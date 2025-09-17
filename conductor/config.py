@@ -46,6 +46,100 @@ class RemoteLoggingConfig:
 
 
 @dataclass
+class RepositoryLocation:
+    """Description of a repository that stores resources or code."""
+
+    name: str
+    kind: str
+    location: str
+    reference: Optional[str] = None
+    subpath: Optional[str] = None
+    headers: Dict[str, str] = field(default_factory=dict)
+    extra: Dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_mapping(cls, name: str, data: Mapping[str, Any]) -> "RepositoryLocation":
+        if not isinstance(data, Mapping):
+            raise TypeError(f"Repository location '{name}' must be a mapping.")
+        kind = str(data.get("type") or data.get("kind") or "filesystem").lower()
+        allowed = {"filesystem", "http", "git"}
+        if kind not in allowed:
+            raise ValueError(
+                f"Repository location '{name}' uses unsupported type '{kind}'."
+            )
+        location = (
+            data.get("location")
+            or data.get("path")
+            or data.get("url")
+            or data.get("target")
+        )
+        if not location:
+            raise ValueError(
+                f"Repository location '{name}' requires a 'location', 'path', 'url', or 'target'."
+            )
+        reference = data.get("reference") or data.get("ref") or data.get("branch")
+        subpath = data.get("subpath") or data.get("sub_path") or data.get("folder")
+        headers = dict(data.get("headers", {}))
+        known_keys = {
+            "name",
+            "type",
+            "kind",
+            "location",
+            "path",
+            "url",
+            "target",
+            "reference",
+            "ref",
+            "branch",
+            "subpath",
+            "sub_path",
+            "folder",
+            "headers",
+        }
+        extra = {k: v for k, v in data.items() if k not in known_keys}
+        return cls(
+            name=name,
+            kind=kind,
+            location=str(location),
+            reference=str(reference) if reference is not None else None,
+            subpath=str(subpath) if subpath is not None else None,
+            headers=headers,
+            extra=extra,
+        )
+
+
+def _parse_repository_locations(raw: Any, section_name: str) -> Dict[str, RepositoryLocation]:
+    if raw is None:
+        return {}
+    if isinstance(raw, Mapping):
+        items = list(raw.items())
+    elif isinstance(raw, Iterable):
+        items = []
+        for entry in raw:
+            if not isinstance(entry, Mapping):
+                raise TypeError(
+                    f"Entries in '{section_name}' must be mappings containing at least a name."
+                )
+            name = entry.get("name")
+            if not name:
+                raise ValueError(
+                    f"Entries in '{section_name}' require a 'name' attribute."
+                )
+            items.append((str(name), entry))
+    else:
+        raise TypeError(
+            f"Configuration section '{section_name}' must be a mapping or a list of mappings."
+        )
+    locations: Dict[str, RepositoryLocation] = {}
+    for name, data in items:
+        key = str(name)
+        if key in locations:
+            raise ValueError(f"Duplicate repository location '{key}' in '{section_name}'.")
+        locations[key] = RepositoryLocation.from_mapping(key, data)
+    return locations
+
+
+@dataclass
 class GlobalConfig:
     """Runtime configuration shared across the entire flow."""
 
@@ -55,6 +149,9 @@ class GlobalConfig:
     max_concurrency: Optional[int] = None
     process_pool_size: Optional[int] = None
     shared_state: Dict[str, Any] = field(default_factory=dict)
+    dependencies: List[str] = field(default_factory=list)
+    resource_locations: Dict[str, RepositoryLocation] = field(default_factory=dict)
+    code_locations: Dict[str, RepositoryLocation] = field(default_factory=dict)
     extra: Dict[str, Any] = field(default_factory=dict)
 
     @classmethod
@@ -73,6 +170,15 @@ class GlobalConfig:
         max_concurrency = data.get("max_concurrency") or data.get("maxConcurrency")
         process_pool_size = data.get("process_pool_size") or data.get("processPoolSize")
         shared_state = dict(data.get("shared_state") or data.get("sharedState") or {})
+        dependencies = list(data.get("dependencies") or data.get("python_dependencies") or [])
+        resource_locations = _parse_repository_locations(
+            data.get("resource_locations") or data.get("resourceLocations"),
+            "resource_locations",
+        )
+        code_locations = _parse_repository_locations(
+            data.get("code_locations") or data.get("codeLocations"),
+            "code_locations",
+        )
 
         known_keys = {
             "remote_logging",
@@ -87,6 +193,12 @@ class GlobalConfig:
             "processPoolSize",
             "shared_state",
             "sharedState",
+            "dependencies",
+            "python_dependencies",
+            "resource_locations",
+            "resourceLocations",
+            "code_locations",
+            "codeLocations",
         }
         extra = {k: v for k, v in data.items() if k not in known_keys}
 
@@ -97,6 +209,9 @@ class GlobalConfig:
             max_concurrency=int(max_concurrency) if max_concurrency is not None else None,
             process_pool_size=int(process_pool_size) if process_pool_size is not None else None,
             shared_state=shared_state,
+            dependencies=dependencies,
+            resource_locations=resource_locations,
+            code_locations=code_locations,
             extra=extra,
         )
 
