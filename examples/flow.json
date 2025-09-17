@@ -1,6 +1,6 @@
 {
   "name": "example",
-  "description": "Sample flow showing inline, process and branching nodes",
+  "description": "Sample flow showing inline, process, and container nodes",
   "start": ["start"],
   "nodes": [
     {
@@ -25,7 +25,18 @@
       "name": "Process Worker",
       "executor": "process",
       "callable": "examples.flow_functions:intensive",
-      "transitions": {"success": ["final"]}
+      "transitions": {"success": ["container"]}
+    },
+    {
+      "id": "container",
+      "name": "Docker Processor",
+      "executor": "docker",
+      "image": "conductor-example-node:latest",
+      "description": "Example container node that enriches the payload",
+      "transitions": {
+        "success": ["final"],
+        "error": ["final"]
+      }
     },
     {
       "id": "final",

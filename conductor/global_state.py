@@ -1,15 +1,17 @@
-"""Shared state utilities available to all nodes."""
+﻿"""Shared state utilities available to all nodes."""
 from __future__ import annotations
 
 import asyncio
 from multiprocessing import Manager
+from threading import Lock
 from typing import Any, Dict, Iterable, MutableMapping, Optional
 
 __all__ = ["GlobalState", "get_global_state", "set_initial_state", "child_initializer", "get_shared_proxy"]
 
-
-_MANAGER = Manager()
-_SHARED_PROXY = _MANAGER.dict()
+_MANAGER: Optional[Manager] = None
+_SHARED_PROXY: Optional[MutableMapping[str, Any]] = None
+_GLOBAL_STATE: Optional["GlobalState"] = None
+_INIT_LOCK = Lock()
 
 
 class GlobalState:
@@ -68,23 +70,36 @@ class GlobalState:
         return self._storage
 
 
-_GLOBAL_STATE = GlobalState(_SHARED_PROXY)
+def _ensure_state() -> None:
+    global _MANAGER, _SHARED_PROXY, _GLOBAL_STATE
+    if _GLOBAL_STATE is not None:
+        return
+    with _INIT_LOCK:
+        if _GLOBAL_STATE is not None:
+            return
+        manager = Manager()
+        proxy = manager.dict()
+        _MANAGER = manager
+        _SHARED_PROXY = proxy
+        _GLOBAL_STATE = GlobalState(proxy)
 
 
 def get_global_state() -> GlobalState:
-    """Return the global state instance."""
+    _ensure_state()
+    assert _GLOBAL_STATE is not None
     return _GLOBAL_STATE
 
 
 def set_initial_state(data: Optional[Dict[str, Any]] = None) -> None:
-    """Populate the shared state with predefined values."""
     if not data:
         return
-    _GLOBAL_STATE.update_sync(data)
+    state = get_global_state()
+    state.update_sync(data)
 
 
 def _set_proxy(proxy: MutableMapping[str, Any]) -> None:
-    global _GLOBAL_STATE
+    global _SHARED_PROXY, _GLOBAL_STATE
+    _SHARED_PROXY = proxy
     _GLOBAL_STATE = GlobalState(proxy)
 
 
@@ -94,5 +109,6 @@ def child_initializer(proxy: MutableMapping[str, Any]) -> None:  # pragma: no co
 
 
 def get_shared_proxy():
-    return _GLOBAL_STATE.get_proxy()
-
+    _ensure_state()
+    assert _SHARED_PROXY is not None
+    return _SHARED_PROXY

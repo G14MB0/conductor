@@ -1,4 +1,4 @@
-"""Command line interface for running conductor flows."""
+﻿"""Command line interface for running conductor flows."""
 from __future__ import annotations
 
 import argparse
@@ -8,8 +8,9 @@ import logging
 from pathlib import Path
 from typing import Any, Optional
 
-from .config import FlowConfig, GlobalConfig, load_flow_config, load_global_config
-from .execution import FlowExecutor
+from .config import GlobalConfig, load_flow_config, load_global_config
+from .diagram import render_mermaid_diagram, summarise_trace
+from .execution import ExecutionTrace, FlowExecutor
 from .logging_utils import configure_logging
 
 
@@ -22,6 +23,13 @@ def _load_payload(payload: Optional[str], payload_file: Optional[str]) -> Any:
         text = Path(payload_file).read_text()
         return json.loads(text)
     return None
+
+
+def _load_trace(path: Optional[str]) -> Optional[ExecutionTrace]:
+    if not path:
+        return None
+    data = json.loads(Path(path).read_text())
+    return ExecutionTrace.from_dict(data)
 
 
 async def _run_flow(args: argparse.Namespace) -> None:
@@ -39,6 +47,38 @@ async def _run_flow(args: argparse.Namespace) -> None:
             print(json.dumps([result.to_dict() for result in results], indent=2))
         if args.print_state:
             print(json.dumps(executor.global_state.to_dict(), indent=2))
+
+        trace = executor.trace.to_dict() if executor.trace else None
+        if args.trace_file:
+            if trace is None:
+                raise RuntimeError("Trace data is not available for this run.")
+            Path(args.trace_file).write_text(json.dumps(trace, indent=2))
+        if args.print_trace and trace:
+            print(json.dumps(trace, indent=2))
+
+
+def _render_diagram(args: argparse.Namespace) -> None:
+    flow_config = load_flow_config(args.flow)
+    trace: Optional[ExecutionTrace] = _load_trace(args.trace_file)
+
+    if args.format != "mermaid":
+        raise ValueError(f"Unsupported diagram format '{args.format}'.")
+
+    diagram = render_mermaid_diagram(
+        flow_config,
+        trace=trace,
+        include_metadata=args.include_metadata,
+        title=args.title,
+    )
+
+    if args.output:
+        Path(args.output).write_text(diagram)
+    else:
+        print(diagram)
+
+    if args.print_summary and trace:
+        summary = summarise_trace(trace)
+        print(json.dumps(summary, indent=2))
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -69,7 +109,46 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Print the shared global state after flow execution.",
     )
-    parser.set_defaults(func=_run_flow)
+    run_parser.add_argument(
+        "--print-trace",
+        action="store_true",
+        help="Print the execution trace in JSON format once the flow completes.",
+    )
+    run_parser.add_argument(
+        "--trace-file",
+        help="Write the execution trace to the provided path as JSON.",
+    )
+    run_parser.set_defaults(func=_run_flow)
+
+    diagram_parser = subparsers.add_parser("diagram", help="Render a diagram for the flow definition")
+    diagram_parser.add_argument("--flow", required=True, help="Path to the flow configuration file (JSON/YAML/TOML).")
+    diagram_parser.add_argument("--trace-file", help="Path to an execution trace JSON file to highlight the executed path.")
+    diagram_parser.add_argument(
+        "--format",
+        default="mermaid",
+        choices=["mermaid"],
+        help="Output format for the diagram (default: mermaid).",
+    )
+    diagram_parser.add_argument(
+        "--output",
+        help="Write the generated diagram to the specified path instead of stdout.",
+    )
+    diagram_parser.add_argument(
+        "--include-metadata",
+        action="store_true",
+        help="Embed execution statistics (when available) inside node labels.",
+    )
+    diagram_parser.add_argument(
+        "--title",
+        help="Optional title to embed in the generated diagram.",
+    )
+    diagram_parser.add_argument(
+        "--print-summary",
+        action="store_true",
+        help="Print aggregated execution statistics when a trace is provided.",
+    )
+    diagram_parser.set_defaults(func=_render_diagram)
+
     return parser
 
 
@@ -79,12 +158,17 @@ def main(argv: Optional[list[str]] = None) -> None:
     if not hasattr(args, "func"):
         parser.print_help()
         return
+    func = args.func
     try:
-        asyncio.run(args.func(args))
+        if asyncio.iscoroutinefunction(func):
+            asyncio.run(func(args))
+            return
+        result = func(args)
+        if asyncio.iscoroutine(result):
+            asyncio.run(result)
     except KeyboardInterrupt:  # pragma: no cover - CLI convenience
         pass
 
 
 if __name__ == "__main__":  # pragma: no cover
     main()
-

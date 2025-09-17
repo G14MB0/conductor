@@ -11,7 +11,7 @@
     "enabled": false
   },
   "container_registries": [
-    "registry.example.com/library"
+    "docker.io"
   ],
   "process_pool_size": 2,
   "max_concurrency": 4
